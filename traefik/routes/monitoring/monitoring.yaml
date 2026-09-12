@@ -7,7 +7,7 @@ spec:
     - websecure
 
   routes:
-    - match: Host(`foodonline.run.place`) && PathPrefix(`/grafana`)
+    - match: Host(`grafana.foodonline.run.place`)
       kind: Rule
 
       middlewares:
