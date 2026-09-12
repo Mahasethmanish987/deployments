@@ -1,4 +1,4 @@
-name: Deploy deployments to Bastion
+name: Deploy deployments to Bastions
 
 on:
   push:
@@ -12,33 +12,62 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
+    env:
+      BASTION_HOST: ${{ secrets.BASTION_HOST }}
+      BASTION_USER: ${{ secrets.BASTION_USER }}
+      BASTION_PORT: ${{ secrets.BASTION_PORT }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup SSH
+        env:
+          BASTION_SSH_KEY: ${{ secrets.BASTION_SSH_KEY }}
         run: |
+          set -euo pipefail
+
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
-          echo "${{ secrets.BASTION_SSH_KEY }}" > ~/.ssh/github-actions-bastion
-          chmod 600 ~/.ssh/github-actions-bastion
+          # Strip CR (Windows-pasted secrets) and guarantee a trailing newline.
+          # OpenSSH rejects a key file whose final line has no newline.
+          printf '%s\n' "$BASTION_SSH_KEY" | tr -d '\r' > ~/.ssh/bastion_key
+          chmod 600 ~/.ssh/bastion_key
 
-          ssh-keyscan -H "${{ secrets.BASTION_HOST }}" >> ~/.ssh/known_hosts
+          # Fail loudly here if the secret is not a usable private key,
+          # instead of surfacing later as "Permission denied (publickey)".
+          if ! ssh-keygen -y -f ~/.ssh/bastion_key > ~/.ssh/bastion_key.pub; then
+            echo "::error::BASTION_SSH_KEY is not a valid, passphrase-less private key."
+            echo "First/last line of what was written:"
+            head -n 1 ~/.ssh/bastion_key
+            tail -n 1 ~/.ssh/bastion_key
+            exit 1
+          fi
+
+          echo "Public key derived from the secret — this exact line must exist"
+          echo "in ~/.ssh/authorized_keys of user '$BASTION_USER' on the bastion:"
+          cat ~/.ssh/bastion_key.pub
+
+          ssh-keyscan -p "${BASTION_PORT:-22}" -H "$BASTION_HOST" >> ~/.ssh/known_hosts
 
       - name: Test SSH connection
         run: |
-          ssh \
-            -i ~/.ssh/github-actions-bastion \
+          set -euo pipefail
+          ssh -v \
+            -i ~/.ssh/bastion_key \
             -o IdentitiesOnly=yes \
-            "${{ secrets.BASTION_USER }}@${{ secrets.BASTION_HOST }}" \
+            -o BatchMode=yes \
+            -p "${BASTION_PORT:-22}" \
+            "$BASTION_USER@$BASTION_HOST" \
             "echo SSH connection successful"
 
       - name: Sync repository to Bastion
         run: |
+          set -euo pipefail
           rsync -avz --delete \
-            -e "ssh -i ~/.ssh/github-actions-bastion -o IdentitiesOnly=yes" \
+            -e "ssh -i ~/.ssh/bastion_key -o IdentitiesOnly=yes -o BatchMode=yes -p ${BASTION_PORT:-22}" \
             --exclude='.git/' \
             --exclude='.github/' \
             ./ \
-            "${{ secrets.BASTION_USER }}@${{ secrets.BASTION_HOST }}:~/deployments/"
+            "$BASTION_USER@$BASTION_HOST:~/deployments/"
