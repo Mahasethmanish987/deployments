@@ -15,7 +15,7 @@ spec:
           namespace: traefik
 
       services:
-        - name: monitoring-grafa
+        - name: monitoring-grafana
           port: 80
 
   tls:
