@@ -1,0 +1,26 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: product-service
+spec:
+  entryPoints:
+    - websecure
+
+  routes:
+    - match: Host(`foodonline.run.place`) && PathPrefix(`/products`)
+      kind: Rule
+
+      middlewares:
+        - name: cors
+          namespace: traefik
+        - name: rate-limit
+          namespace: traefik
+        - name: vpn-only
+          namespace: traefik
+
+      services:
+        - name: product-service
+          port: 8000
+
+  tls:
+    secretName: foodonline-tls
