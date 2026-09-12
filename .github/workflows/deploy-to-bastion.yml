@@ -1,37 +1,26 @@
-name: Deploy deployments to Bastion
+- name: Setup SSH
+  shell: bash
+  run: |
+    mkdir -p ~/.ssh
+    chmod 700 ~/.ssh
 
-on:
-  push:
-    branches:
-      - main
+    echo "${{ secrets.BASTION_SSH_KEY }}" > ~/.ssh/github-actions-bastion
+    chmod 600 ~/.ssh/github-actions-bastion
 
-permissions:
-  contents: read
+    ssh-keyscan -H "${{ secrets.BASTION_HOST }}" >> ~/.ssh/known_hosts
 
-jobs:
-  deploy:
-    name: Sync to Bastion
-    runs-on: ubuntu-latest
+- name: Test SSH connection
+  run: |
+    ssh -i ~/.ssh/github-actions-bastion \
+      -o IdentitiesOnly=yes \
+      "${{ secrets.BASTION_USER }}@${{ secrets.BASTION_HOST }}" \
+      "echo SSH connection successful"
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup SSH
-        shell: bash
-        run: |
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-
-          echo "${{ secrets.BASTION_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-
-          ssh-keyscan -H "${{ secrets.BASTION_HOST }}" >> ~/.ssh/known_hosts
-
-      - name: Sync repository to Bastion
-        run: |
-          rsync -avz --delete \
-            --exclude='.git/' \
-            --exclude='.github/' \
-            ./ \
-            "${{ secrets.BASTION_USER }}@${{ secrets.BASTION_HOST }}:~/deployments/"
+- name: Sync repository to Bastion
+  run: |
+    rsync -avz --delete \
+      -e "ssh -i ~/.ssh/github-actions-bastion -o IdentitiesOnly=yes" \
+      --exclude='.git/' \
+      --exclude='.github/' \
+      ./ \
+      "${{ secrets.BASTION_USER }}@${{ secrets.BASTION_HOST }}:~/deployments/"
