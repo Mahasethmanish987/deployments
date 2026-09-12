@@ -1,7 +1,21 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: grafana-cert
+  namespace: monitoring
+spec:
+  secretName: grafana-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - grafana.foodonline.run.place
+---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
   name: grafana-service
+  namespace: traefik
 spec:
   entryPoints:
     - websecure
@@ -20,4 +34,4 @@ spec:
           port: 80
 
   tls:
-    secretName: foodonline-tls
+    secretName: grafana-tls
