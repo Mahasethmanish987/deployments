@@ -16,6 +16,7 @@ spec:
 
       services:
         - name: monitoring-grafana
+          namespace: monitoring
           port: 80
 
   tls:
