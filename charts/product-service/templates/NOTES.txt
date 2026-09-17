@@ -1,0 +1,18 @@
+{{ .Release.Name }} is upgraded to:
+
+  image:  {{ .Values.image.repository }}:{{ .Values.image.tag }}
+  commit: {{ .Values.gitCommit | default "unknown" }}
+
+Watch it land:
+
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ .Release.Name }}
+
+Confirm the running build from inside the cluster:
+
+  kubectl -n {{ .Release.Namespace }} run curl-check --rm -it --restart=Never \
+    --image=curlimages/curl -- \
+    curl -s http://{{ .Release.Name }}:{{ .Values.service.port }}/version
+
+Roll back if it misbehaves:
+
+  helm -n {{ .Release.Namespace }} rollback {{ .Release.Name }}

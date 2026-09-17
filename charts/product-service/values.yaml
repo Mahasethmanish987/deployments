@@ -1,16 +1,77 @@
-replicaCount: 2
+replicaCount: 3
 
 image:
   repository: manish9817680/product-service
+  # CI publishes an immutable `sha-<short>` tag for every push to main and
+  # passes it with --set image.tag=, so a rollback lands on an exact build.
   tag: latest
   pullPolicy: Always
+
+# Commit the running image was built from; shown by GET /version.
+gitCommit: ""
+
+# Extra plain environment variables, e.g. LOG_LEVEL: DEBUG
+extraEnv: {}
 
 service:
   type: ClusterIP
   port: 8000
   targetPort: 8000
 
-resources: {}
+# OpenBao's Kubernetes auth role is bound to this name - renaming it here
+# means updating the auth role too.
+serviceAccount:
+  name: product-service-sa
+
+# Zero-downtime rollout: a new pod must be ready before an old one goes away.
+strategy:
+  maxSurge: 1
+  maxUnavailable: 0
+
+probes:
+  startup:
+    path: /health
+    periodSeconds: 2
+    failureThreshold: 15
+  liveness:
+    path: /health
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  readiness:
+    path: /ready
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 3
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Keeps two of the three pods serving while a node drains.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+podAnnotations: {}
 
 nodeSelector: {}
 

@@ -7,15 +7,23 @@ spec:
     - websecure
 
   routes:
-    - match: Host(`foodonline.run.place`) && PathPrefix(`/products`)
+    # The API serves four top-level resources, so the gateway matches each one
+    # and forwards the path untouched - the service really does answer on
+    # /products, /categories, /orders and /stats.
+    # /health, /ready, /version and /docs stay unrouted: the probes reach them
+    # inside the cluster.
+    - match: >-
+        Host(`foodonline.run.place`) &&
+        ( PathPrefix(`/products`)
+        || PathPrefix(`/categories`)
+        || PathPrefix(`/orders`)
+        || PathPrefix(`/stats`) )
       kind: Rule
 
       middlewares:
         - name: cors
           namespace: traefik
         - name: rate-limit
-          namespace: traefik
-        - name: vpn-only
           namespace: traefik
 
       services:
