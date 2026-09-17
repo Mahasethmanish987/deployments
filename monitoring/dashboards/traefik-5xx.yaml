@@ -1,0 +1,746 @@
+# Grafana dashboard: Traefik 5xx. Provisioned, not clicked in.
+#
+# The Grafana that ships with kube-prometheus-stack runs a sidecar watching the
+# monitoring namespace for ConfigMaps labelled `grafana_dashboard: "1"`. It
+# writes them into Grafana's provisioning directory, so this dashboard survives
+# a Grafana pod restart or PVC loss — anything created through the UI does not.
+#
+# Datasources are picked through dashboard variables ("Metrics source" /
+# "Logs source") rather than hardcoded UIDs, so the panels bind correctly no
+# matter what UID your Prometheus datasource ended up with.
+#
+# The four Loki-backed panels stay empty until Traefik emits JSON access logs
+# AND monitoring/logs/ is installed. The Prometheus panels work as soon as
+# traefik-metrics.yaml is applied.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: traefik-5xx-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  traefik-5xx.json: |
+    {
+      "uid": "traefik-5xx",
+      "title": "Traefik \u2014 5xx Errors",
+      "tags": [
+        "traefik",
+        "ingress",
+        "errors"
+      ],
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "editable": true,
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "templating": {
+        "list": [
+          {
+            "type": "datasource",
+            "name": "ds_prom",
+            "label": "Metrics source",
+            "query": "prometheus",
+            "refresh": 1,
+            "hide": 0,
+            "current": {}
+          },
+          {
+            "type": "datasource",
+            "name": "ds_loki",
+            "label": "Logs source",
+            "query": "loki",
+            "refresh": 1,
+            "hide": 0,
+            "current": {}
+          },
+          {
+            "type": "query",
+            "name": "service",
+            "label": "Backend",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${ds_prom}"
+            },
+            "query": "label_values(traefik_service_requests_total, service)",
+            "refresh": 2,
+            "includeAll": true,
+            "allValue": ".*",
+            "multi": true,
+            "current": {
+              "text": "All",
+              "value": "$__all"
+            }
+          }
+        ]
+      },
+      "panels": [
+        {
+          "type": "row",
+          "id": 100,
+          "title": "Right now",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "collapsed": false,
+          "panels": []
+        },
+        {
+          "type": "stat",
+          "id": 1,
+          "title": "5xx share of all requests",
+          "description": "Every request through Traefik, not just health checks. This is the number the TraefikGlobal5xxRate alert watches.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds_prom}"
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 6,
+            "x": 0,
+            "y": 1
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(traefik_entrypoint_requests_total{entrypoint!=\"metrics\",code=~\"5..\"}[5m])) / clamp_min(sum(rate(traefik_entrypoint_requests_total{entrypoint!=\"metrics\"}[5m])), 0.001) * 100",
+              "legendFormat": "5xx %"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "decimals": 2,
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "#EAB839",
+                    "value": 2
+                  },
+                  {
+                    "color": "red",
+                    "value": 10
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "background",
+            "graphMode": "area",
+            "textMode": "auto"
+          }
+        },
+        {
+          "type": "stat",
+          "id": 2,
+          "title": "5xx per second",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds_prom}"
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 6,
+            "x": 6,
+            "y": 1
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(traefik_entrypoint_requests_total{entrypoint!=\"metrics\",code=~\"5..\"}[5m]))",
+              "legendFormat": "5xx/s"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "decimals": 3,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "area"
+          }
+        },
+        {
+          "type": "stat",
+          "id": 3,
+          "title": "Backend unreachable (502/503/504)",
+          "description": "Traefik generated these itself \u2014 the request never reached a pod. Check Endpoints and readiness probes, not application logs.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds_prom}"
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 6,
+            "x": 12,
+            "y": 1
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(traefik_entrypoint_requests_total{entrypoint!=\"metrics\",code=~\"50[234]\"}[5m]))",
+              "legendFormat": "502/503/504"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "decimals": 3,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "area"
+          }
+        },
+        {
+          "type": "stat",
+          "id": 4,
+          "title": "Total throughput",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds_prom}"
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 6,
+            "x": 18,
+            "y": 1
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(traefik_entrypoint_requests_total{entrypoint!=\"metrics\"}[5m]))",
+              "legendFormat": "req/s"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "decimals": 2,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "none",
+            "graphMode": "area"
+          }
+        },
+        {
+          "type": "row",
+          "id": 101,
+          "title": "Which backend, which code",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 6
+          },
+          "collapsed": false,
+          "panels": []
+        },
+        {
+          "type": "timeseries",
+          "id": 5,
+          "title": "5xx rate by backend",
+          "description": "traefik_service_requests_total \u2014 the backend answered with 5xx. Service names look like <namespace>-<service>-<port>@kubernetescrd.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds_prom}"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 0,
+            "y": 7
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (service) (rate(traefik_service_requests_total{code=~\"5..\",service=~\"$service\"}[$__rate_interval]))",
+              "legendFormat": "{{service}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 20,
+                "lineWidth": 2,
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "max",
+                "mean"
+              ],
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "id": 6,
+          "title": "5xx error ratio by backend",
+          "description": "Same threshold the alerts use: warning above 2%, critical above 10%, both gated on at least 0.05 req/s of traffic.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds_prom}"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 12,
+            "y": 7
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (service) (rate(traefik_service_requests_total{code=~\"5..\",service=~\"$service\"}[5m])) / clamp_min(sum by (service) (rate(traefik_service_requests_total{service=~\"$service\"}[5m])), 0.001) * 100",
+              "legendFormat": "{{service}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "min": 0,
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "showPoints": "never"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "#EAB839",
+                    "value": 2
+                  },
+                  {
+                    "color": "red",
+                    "value": 10
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "id": 7,
+          "title": "Requests by status class",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds_prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 16
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(traefik_entrypoint_requests_total{entrypoint!=\"metrics\",code=~\"2..\"}[$__rate_interval]))",
+              "legendFormat": "2xx"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(rate(traefik_entrypoint_requests_total{entrypoint!=\"metrics\",code=~\"3..\"}[$__rate_interval]))",
+              "legendFormat": "3xx"
+            },
+            {
+              "refId": "C",
+              "expr": "sum(rate(traefik_entrypoint_requests_total{entrypoint!=\"metrics\",code=~\"4..\"}[$__rate_interval]))",
+              "legendFormat": "4xx"
+            },
+            {
+              "refId": "D",
+              "expr": "sum(rate(traefik_entrypoint_requests_total{entrypoint!=\"metrics\",code=~\"5..\"}[$__rate_interval]))",
+              "legendFormat": "5xx"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 30,
+                "lineWidth": 1,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "normal"
+                }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "5xx"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "4xx"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "orange"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "2xx"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "green"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "table",
+          "id": 8,
+          "title": "Top backends by 5xx count (selected range)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds_prom}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 16
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "topk(10, sum by (service, code) (increase(traefik_service_requests_total{code=~\"5..\"}[$__range])))",
+              "instant": true,
+              "format": "table"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "renameByName": {
+                  "service": "Backend",
+                  "code": "Status",
+                  "Value": "Errors"
+                }
+              }
+            },
+            {
+              "id": "sortBy",
+              "options": {
+                "fields": {},
+                "sort": [
+                  {
+                    "field": "Errors",
+                    "desc": true
+                  }
+                ]
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 0,
+              "custom": {
+                "align": "auto"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "showHeader": true
+          }
+        },
+        {
+          "type": "row",
+          "id": 102,
+          "title": "Access log \u2014 what actually failed",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 24
+          },
+          "collapsed": false,
+          "panels": []
+        },
+        {
+          "type": "logs",
+          "id": 9,
+          "title": "Live 5xx requests",
+          "description": "Traefik access log, filtered to 5xx. Requires logs.access.format=json on the Traefik release \u2014 without it the `status` label is never set and this panel stays empty. See monitoring/README.md.",
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_loki}"
+          },
+          "gridPos": {
+            "h": 11,
+            "w": 24,
+            "x": 0,
+            "y": 25
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "{namespace=\"traefik\", status=~\"5..\"}",
+              "queryType": "range"
+            }
+          ],
+          "options": {
+            "showTime": true,
+            "wrapLogMessage": true,
+            "sortOrder": "Descending",
+            "enableLogDetails": true,
+            "dedupStrategy": "none"
+          }
+        },
+        {
+          "type": "table",
+          "id": 10,
+          "title": "Paths returning 5xx",
+          "description": "Extracted from the access log at query time \u2014 `path` is deliberately not a stream label, because unbounded label values make Loki unqueryable.",
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_loki}"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 0,
+            "y": 36
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "topk(10, sum by (path) (count_over_time({namespace=\"traefik\", status=~\"5..\"} | json path=\"RequestPath\" [$__range])))",
+              "queryType": "instant"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "renameByName": {
+                  "path": "Path",
+                  "Value": "5xx responses"
+                }
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "showHeader": true
+          }
+        },
+        {
+          "type": "timeseries",
+          "id": 11,
+          "title": "5xx log lines by backend",
+          "description": "Cross-check against the metrics panels above. A gap between them usually means the access log and the metrics disagree about which backend served the request \u2014 normally a routing change mid-window.",
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_loki}"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 12,
+            "y": 36
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (backend) (rate({namespace=\"traefik\", status=~\"5..\"}[$__rate_interval]))",
+              "queryType": "range",
+              "legendFormat": "{{backend}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 20,
+                "lineWidth": 2,
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        }
+      ]
+    }

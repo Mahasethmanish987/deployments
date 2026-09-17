@@ -1,0 +1,140 @@
+# 5xx alerting on REAL ingress traffic, from Traefik's own counters.
+#
+# Metric shape (after the ServiceMonitor's metricRelabelings):
+#   traefik_service_requests_total{service="default-product-service-8000@kubernetescrd", code="500"}
+#   traefik_entrypoint_requests_total{entrypoint="websecure", code="502"}
+#
+# Two different questions, two different metrics:
+#   service    → the backend answered 5xx (application bug)
+#   entrypoint → Traefik itself answered 5xx (502/503 no healthy backend, 504 timeout)
+# An entrypoint 5xx count higher than the sum of service 5xx means the request
+# never reached a pod — check Endpoints and readiness, not application logs.
+#
+# NOTE: per-router (per-Host) breakdown is NOT available. The chart defaults
+# metrics.prometheus.addRoutersLabels=false and traefik/install.sh does not
+# override it. Add `--set metrics.prometheus.addRoutersLabels=true` if you want
+# traefik_router_requests_total{router=...} split by domain.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: traefik-5xx-alerts
+  namespace: monitoring
+  labels:
+    # REQUIRED for the same reason as the ServiceMonitor — the default
+    # ruleSelector matches `release: monitoring`. Without it the rules load
+    # into no Prometheus and nothing ever fires.
+    release: monitoring
+spec:
+  groups:
+    - name: traefik-ingress-5xx
+      interval: 30s
+      rules:
+        # ── Per-backend 5xx ratio ─────────────────────────────────────────
+        # The traffic floor is the load-bearing part. Without it a single
+        # failed request against an idle service is a 100% error rate and
+        # pages at 03:00. 0.05 req/s ≈ 3 requests/minute.
+        - alert: TraefikHigh5xxRate
+          expr: |
+            (
+              sum by (service) (rate(traefik_service_requests_total{code=~"5.."}[5m]))
+              /
+              sum by (service) (rate(traefik_service_requests_total[5m]))
+            ) > 0.02
+            and
+            sum by (service) (rate(traefik_service_requests_total[5m])) > 0.05
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "5xx rate {{ $value | humanizePercentage }} on {{ $labels.service }}"
+            description: >-
+              {{ $labels.service }} has served more than 2% 5xx for 10 minutes
+              ({{ $value | humanizePercentage }} of requests). Open the
+              "Traefik — 5xx" dashboard, then the access-log panel on it to see
+              which paths and status codes are failing.
+
+        - alert: TraefikHigh5xxRate
+          expr: |
+            (
+              sum by (service) (rate(traefik_service_requests_total{code=~"5.."}[5m]))
+              /
+              sum by (service) (rate(traefik_service_requests_total[5m]))
+            ) > 0.10
+            and
+            sum by (service) (rate(traefik_service_requests_total[5m])) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "5xx rate {{ $value | humanizePercentage }} on {{ $labels.service }}"
+            description: >-
+              {{ $labels.service }} has served more than 10% 5xx for 5 minutes
+              ({{ $value | humanizePercentage }} of requests). Users are seeing
+              errors right now.
+
+        # ── Traefik-generated errors (request never reached a pod) ────────
+        - alert: TraefikBackendUnreachable
+          expr: |
+            sum by (entrypoint) (
+              rate(traefik_entrypoint_requests_total{entrypoint!="metrics", code=~"50[234]"}[5m])
+            ) > 0.1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Traefik returning 502/503/504 on {{ $labels.entrypoint }}"
+            description: >-
+              Traefik emitted {{ $value | printf "%.2f" }} req/s of 502/503/504 on
+              entrypoint {{ $labels.entrypoint }} for 5 minutes — no healthy backend
+              or an upstream timeout. Check pod readiness and the Service's Endpoints;
+              the application logs will show nothing because the request never arrived.
+
+        # ── Fleet-wide gate ───────────────────────────────────────────────
+        # Catches 5xx spread thinly across several backends, where no single
+        # per-service ratio crosses its threshold.
+        - alert: TraefikGlobal5xxRate
+          expr: |
+            (
+              sum(rate(traefik_entrypoint_requests_total{entrypoint!="metrics", code=~"5.."}[5m]))
+              /
+              sum(rate(traefik_entrypoint_requests_total{entrypoint!="metrics"}[5m]))
+            ) > 0.05
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Cluster-wide ingress 5xx rate {{ $value | humanizePercentage }}"
+            description: >-
+              More than 5% of ALL requests through Traefik have been 5xx for 10
+              minutes. Suspect shared infrastructure (database, cache, node
+              pressure) rather than one service.
+
+        # ── Config reload ─────────────────────────────────────────────────
+        # Cheap and high value: a failed reload means Traefik is serving a stale
+        # routing table, so new or edited IngressRoutes silently do nothing.
+        - alert: TraefikConfigReloadFailed
+          expr: traefik_config_last_reload_success == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Traefik config reload failing on {{ $labels.instance }}"
+            description: >-
+              Traefik has been unable to load its dynamic configuration for 5+
+              minutes — routing is frozen at the last good state. Check
+              `kubectl logs -n traefik deploy/traefik` for a malformed
+              IngressRoute or Middleware.
+
+        # ── Scrape health ─────────────────────────────────────────────────
+        # If this fires, every alert above is blind: absent data never fires.
+        - alert: TraefikMetricsDown
+          expr: up{job="traefik-metrics"} == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Traefik metrics target is down"
+            description: >-
+              Prometheus cannot scrape traefik-metrics:9100. Every Traefik alert
+              is silently disabled while this is firing. Check the label selector
+              on Service/traefik-metrics against the real Traefik pod labels.

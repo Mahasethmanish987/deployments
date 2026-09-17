@@ -1,0 +1,68 @@
+# Promtail — ships Traefik's access log to Loki. Chart: grafana/promtail 6.17.1
+#
+# Version note: 6.17.1 is the final Promtail chart release. Promtail reached end
+# of life in March 2026 and receives no further fixes, including security fixes.
+# It works; it just will not change again. Grafana Alloy is the migration target
+# whenever that becomes worth doing.
+#
+# Runs as a DaemonSet and tails /var/log/pods on each node, so every node's agent
+# reads only its own pods — no duplication, no clustering to configure.
+#
+# The chart's default scrape config already discovers every pod in the cluster
+# and attaches namespace / pod / container / node_name labels. That default is
+# left intact: collecting all pod logs costs little and means application logs
+# are there when a 5xx turns out to be an application bug. Only the pipeline is
+# customised, below.
+
+config:
+  clients:
+    # Change this if your Loki release is named or namespaced differently.
+    - url: http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
+
+  snippets:
+    pipelineStages:
+      # REQUIRED FIRST. containerd writes logs as
+      #   <timestamp> <stream> <flags> <message>
+      # The cri stage strips that envelope and sets the real timestamp. Drop it
+      # and every "JSON" line below is actually prefixed text that will not parse.
+      - cri: {}
+
+      # Traefik writes two things to stdout: its own application log and, with
+      # logs.access.format=json, one JSON object per request. The line filter in
+      # the selector means only real access-log lines reach the json stage —
+      # without it the application log produces a parse error per line and
+      # floods Promtail's own logs.
+      - match:
+          selector: '{namespace="traefik"} |~ "DownstreamStatus"'
+          stages:
+            - json:
+                expressions:
+                  status: DownstreamStatus
+                  backend: ServiceName
+                  router: RouterName
+                  method: RequestMethod
+                  path: RequestPath
+                  host: RequestHost
+                  client: ClientHost
+                  duration_ns: Duration
+
+            # Only status and backend are promoted to Loki stream labels. Both
+            # are bounded — a couple of dozen status codes, one value per
+            # Kubernetes Service — so `{status=~"5.."}` stays a cheap query.
+            #
+            # path, client, method and host stay as extracted fields and are
+            # queried with `| json` at read time instead. Promoting a request
+            # path to a stream label creates one stream per URL, which is the
+            # standard way to make a Loki install unqueryable.
+            - labels:
+                status:
+                backend:
+
+# Promtail's own health. Without this the collector can die quietly and the
+# dashboard's log panels just look like a quiet day.
+serviceMonitor:
+  enabled: true
+  labels:
+    # Same rule as everywhere else in this directory: the kube-prometheus-stack
+    # selector only adopts objects labelled with the Helm release name.
+    release: monitoring

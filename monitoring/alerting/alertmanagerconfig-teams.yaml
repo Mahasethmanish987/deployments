@@ -1,0 +1,94 @@
+# Routes the Traefik 5xx alerts to Microsoft Teams.
+#
+# This is an AlertmanagerConfig CRD rather than Helm values on purpose: your
+# custom_kube_prometheus_stack.yml already sets
+#   alertmanagerConfigSelector: {matchLabels: {release: monitoring}}
+#   alertmanagerConfigMatcherStrategy: {type: None}
+# so the operator merges any labelled AlertmanagerConfig into the running
+# Alertmanager. Nothing here requires a `helm upgrade`.
+#
+# Because matcherStrategy is None, the operator does NOT inject a
+# `namespace="monitoring"` matcher — the matchers below are used verbatim.
+# That is exactly what we need: these alerts come from the traefik namespace.
+#
+# Prerequisite: Secret `teams-webhooks` in the monitoring namespace
+# (see teams-webhooks-secret.yaml.template).
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: teams-traefik
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  route:
+    receiver: teams-warning
+    # These alerts are produced by `sum by (service)(...)`, which drops every
+    # label except `service` — they have NO `instance` label. Grouping by
+    # service is what keeps one card per failing backend instead of one card
+    # for "something, somewhere".
+    groupBy: [alertname, service]
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 4h
+    # Scope: only this rule group. Every other alert in the cluster keeps
+    # whatever routing it has today.
+    matchers:
+      - name: alertname
+        matchType: "=~"
+        value: "Traefik.*"
+    routes:
+      - receiver: teams-critical
+        matchers:
+          - name: severity
+            matchType: "="
+            value: critical
+
+  receivers:
+    - name: teams-warning
+      msteamsv2Configs:
+        - sendResolved: true
+          webhookURL:
+            name: teams-webhooks
+            key: warning_url
+          title: '[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }}'
+          text: |
+            {{ range .Alerts -}}
+            **Severity:** {{ .Labels.severity }}
+            **Backend:** {{ .Labels.service }}{{ .Labels.entrypoint }}
+            **Summary:** {{ .Annotations.summary }}
+            **Description:** {{ .Annotations.description }}
+            **Source:** {{ .GeneratorURL }}
+            {{ end }}
+
+    - name: teams-critical
+      msteamsv2Configs:
+        - sendResolved: true
+          webhookURL:
+            name: teams-webhooks
+            key: critical_url
+          title: '[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }}'
+          text: |
+            {{ range .Alerts -}}
+            **Severity:** {{ .Labels.severity }}
+            **Backend:** {{ .Labels.service }}{{ .Labels.entrypoint }}
+            **Summary:** {{ .Annotations.summary }}
+            **Description:** {{ .Annotations.description }}
+            **Source:** {{ .GeneratorURL }}
+            {{ end }}
+
+  inhibitRules:
+    # TraefikHigh5xxRate fires at both warning and critical with the same
+    # alertname. Without this you get two cards in two channels for one
+    # incident. `equal: [alertname, service]` keeps the suppression scoped to
+    # the backend that is actually broken — an outage on product-service must
+    # not silence warnings for user-service.
+    - sourceMatch:
+        - name: severity
+          matchType: "="
+          value: critical
+      targetMatch:
+        - name: severity
+          matchType: "="
+          value: warning
+      equal: [alertname, service]
