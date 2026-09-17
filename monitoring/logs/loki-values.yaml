@@ -56,10 +56,25 @@ singleBinary:
   persistence:
     enabled: true
     size: 20Gi
-    # Leave unset to use the cluster's default StorageClass. Set it explicitly
-    # if the default is not what you want for log data:
-    #   kubectl get storageclass
-    # storageClass: <name>
+    # MUST be set explicitly — this cluster has three StorageClasses and none of
+    # them is marked default, so an unset storageClass produces a PVC with no
+    # provisioner that stays Pending forever (hit 2026-09-17 on first install).
+    #
+    # Why this one of the three:
+    #   csi-cinder-sc-delete  allowVolumeExpansion=true, reclaim Delete  <- here
+    #   csi-cinder-sc-retain  expansion too, but Retain leaves orphaned Cinder
+    #                         volumes behind on uninstall
+    #   cinder                WaitForFirstConsumer, allowVolumeExpansion=FALSE
+    #
+    # Expansion is the deciding factor: log volume only grows, and expansion
+    # cannot be added to a PVC after it is created — you would have to delete
+    # the PVC and lose the data.
+    #
+    # Caveat: this class binds Immediate, so the volume is provisioned before
+    # the pod is scheduled. On a cluster spanning availability zones that can
+    # land the volume in a zone the pod cannot reach; if that happens, switch to
+    # `cinder` (WaitForFirstConsumer) and accept the loss of expansion.
+    storageClass: cinder
 
 # ── Everything below is chart scaffolding we do not want ──────────────────
 # gateway is an nginx front door needed only for the microservices modes.
