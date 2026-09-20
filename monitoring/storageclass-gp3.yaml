@@ -4,7 +4,6 @@ metadata:
   name: cinder-nvme
 provisioner: cinder.csi.openstack.org
 parameters:
-  type: nvme
   fsType: ext4
   availability: nova
 reclaimPolicy: Retain
