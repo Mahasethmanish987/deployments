@@ -1,0 +1,145 @@
+
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+defaultRules:
+  create: true
+  rules:
+
+    kubeControllerManager: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+    etcd: false
+    kubeProxy: false
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PROMETHEUS
+# ─────────────────────────────────────────────────────────────────────────────
+prometheus:
+  prometheusSpec:
+
+    # How far back you can look. This is also what decides whether you can answer
+    # "was this happening last week too?" in the middle of an incident.
+    retention: 15d
+
+    # at 03:00, not at noon.
+    retentionSize: 15GiB
+
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: cinder-nvme
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 20Gi
+
+    resources:
+      requests:
+        cpu: 300m
+        memory: 2Gi
+      limits:
+        memory: 3Gi
+
+
+    scrapeInterval: 30s        # be explicit — the retention math assumes it
+    evaluationInterval: 30s
+
+    walCompression: true
+
+    externalLabels:
+      cluster: foodonline
+
+    enableAdminAPI: false
+
+alertmanager:
+  alertmanagerSpec:
+    replicas: 2
+
+    alertmanagerConfigSelector:
+      matchLabels:
+        release: monitoring
+
+    alertmanagerConfigMatcherStrategy:
+      type: None
+
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: cinder-nvme
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 2Gi
+
+    resources:
+      requests:
+        cpu: 25m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GRAFANA
+# ─────────────────────────────────────────────────────────────────────────────
+grafana:
+
+  admin:
+    user: admin
+    password: admin123
+  persistence:
+    enabled: true
+    type: pvc
+    storageClassName: cinder-nvme
+    accessModes:
+      - ReadWriteOnce
+    size: 5Gi
+
+  deploymentStrategy:
+    type: Recreate
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+    datasources:
+      enabled: true
+      searchNamespace: ALL
+
+  service:
+    type: ClusterIP
+
+
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
