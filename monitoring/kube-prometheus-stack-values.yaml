@@ -94,9 +94,23 @@ alertmanager:
 # ─────────────────────────────────────────────────────────────────────────────
 grafana:
 
-  admin:
-    user: admin
-    password: admin123
+  # Fixed admin credentials -- admin / admin123 -- set explicitly and
+  # deliberately.
+  #
+  # These are the keys the chart actually reads. This file previously used
+  # `admin.user` / `admin.password`, which the chart does not recognise at
+  # all: they were silently ignored and Grafana came up with the chart's
+  # default password (`prom-operator`). Change the credentials HERE, never
+  # under an `admin:` block.
+  #
+  # `admin.existingSecret` is deliberately left unset -- if set it takes
+  # precedence over these two values and they would be ignored again.
+  #
+  # This password is in git in plaintext. Grafana is ClusterIP-only, so it is
+  # reachable via port-forward or Traefik, not from the internet. Accepted
+  # knowingly; switch to `admin.existingSecret` if it is ever exposed.
+  adminUser: admin
+  adminPassword: admin123
   persistence:
     enabled: true
     type: pvc

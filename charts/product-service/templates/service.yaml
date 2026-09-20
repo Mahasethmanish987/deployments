@@ -3,6 +3,13 @@ kind: Service
 
 metadata:
   name: {{ .Release.Name }}
+  # The ServiceMonitor selects this Service by *these* labels. The `selector`
+  # below is a different thing -- it picks pods. Remove these and the
+  # ServiceMonitor matches nothing, with nothing anywhere to say so.
+  labels:
+    app: {{ .Release.Name }}
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
 
 spec:
   type: {{ .Values.service.type }}
@@ -11,6 +18,8 @@ spec:
     app: {{ .Release.Name }}
 
   ports:
-    - port: {{ .Values.service.port }}
+    # Named, because a ServiceMonitor references the port by name, not number.
+    - name: http
+      port: {{ .Values.service.port }}
       targetPort: {{ .Values.service.targetPort }}
       protocol: TCP

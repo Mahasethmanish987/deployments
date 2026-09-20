@@ -18,6 +18,33 @@ service:
   port: 8000
   targetPort: 8000
 
+# Prometheus. The app serves its registry on /metrics on the same port as the
+# API; the Traefik route does not list /metrics, so it stays in-cluster.
+metrics:
+  enabled: true
+  path: /metrics
+
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+
+    # Mandatory, not cosmetic. kube-prometheus-stack-values.yaml leaves
+    # `serviceMonitorSelector` unset, so the chart default of
+    # `serviceMonitorSelectorNilUsesHelmValues: true` applies and the
+    # Prometheus CR ends up with
+    #   serviceMonitorSelector: {matchLabels: {release: "monitoring"}}
+    # where "monitoring" is the RELEASE name from monitoring/install.sh.
+    # A ServiceMonitor without this label is ignored silently -- no error,
+    # no down target, just no data.
+    labels:
+      release: monitoring
+
+    # prometheus_client emits a `<counter>_created` timestamp series for every
+    # counter. Nothing queries them and they roughly double what a counter
+    # costs, so they are dropped at ingest.
+    dropCreatedSeries: true
+
 # OpenBao's Kubernetes auth role is bound to this name - renaming it here
 # means updating the auth role too.
 serviceAccount:

@@ -1,0 +1,32 @@
+{{- if and .Values.metrics.enabled .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app: {{ .Release.Name }}
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+  {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+spec:
+  # Selects the Service by its metadata.labels -- not the pod labels.
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+
+  endpoints:
+    - port: http
+      path: {{ .Values.metrics.path }}
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}
+      {{- if .Values.metrics.serviceMonitor.dropCreatedSeries }}
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: '.*_created'
+          action: drop
+      {{- end }}
+{{- end }}
