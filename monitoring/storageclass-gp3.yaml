@@ -1,0 +1,12 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: cinder-nvme
+provisioner: cinder.csi.openstack.org
+parameters:
+  type: nvme
+  fsType: ext4
+  availability: nova
+reclaimPolicy: Retain
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
